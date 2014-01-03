@@ -29,6 +29,7 @@ class Sanitizer(object):
             req = '.+'
         if len(self.badchars.split(line)) > 1:
             self._to_log('warn' ,'Attempted Bad chars: %s' % line)
+            return None
         reqchars =  re.match(r'(' + req + ')', self.badchars.split(line)[0])
         if reqchars:
             rmvbad = re.sub(r'(' + bad + ')', '', reqchars.group())
@@ -45,3 +46,15 @@ class Connect(object):
 
     def __init__(self):
         self.ssh = paramiko.SSHClient()
+        self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    def connect(self, server=None, key=None):
+        if server or key is None:
+            raise Exception('No server or Key')
+        try:
+            ssh.connect(server, username='root', key_filename=key)
+            return ssh
+        except paramiko.AuthenticationException:
+            print 'Unable to login to remote host.'
+
+

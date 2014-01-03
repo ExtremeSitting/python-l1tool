@@ -5,13 +5,14 @@
 #server change. It could then grab the list of servers and save the compute node
 #info for filtering. This would also test connection to the server and could log
 #success!
-import paramiko
 import logging
 import logging.handlers
 import time
 import cmd
-import re
 import os
+
+from utils import Sanitizer
+from utils import Connect
 #TODO: Need to add command decorators for sanitation instead of assigning sline
 
 
@@ -26,6 +27,8 @@ class Commands(cmd.Cmd):
         self.username = os.getlogin()
         self.connection = ''
         self.log = self.logger()
+        self.sanitize = Sanitizer().sanitize
+        self.keys = 
 
     def logger(self):
         CMD_logger = logging.getLogger('CMDLogger')
@@ -58,6 +61,9 @@ class Commands(cmd.Cmd):
             user hits 'enter' on an empty line"""
         print ''
 
+    def precmd(self, start, line):
+        return cmd.Cmd.precmd(self, start, self.sanitize(line))
+
     def postcmd(self, stop, line):
         """After the command is run make sure the SSH connection has
             been closed"""
@@ -72,40 +78,10 @@ class Commands(cmd.Cmd):
         if self.connection:
             self.connection.close()
 
-    def connect(self):
-        """Setting up the SSH connection."""
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        try:
-            ssh.connect(
-                        'XXXXXXX', username='XXXXXXX',
-                        key_filename='XXXXXXX')
-        except paramiko.AuthenticationException:
-            print 'Unable to login to remote host.'
-        self.connection = ssh
-
-    def sanitize(self, line, req='.+', bad=''):
-        """This will sanitize user input so things can't be backgrounded or
-            sub-shelled. Pipe is allowed at this time. By providing additional
-            args in the form of regex, you can further sanitize user input to
-            only include certain things.
-            Seperate bad chars with a pipe to define multipes"""
-        badchars = re.compile(r'(\s?[\)\(<>;&$`\]\[\}\{\|\\\n\r\t]+[\w\W]*)',
-            re.IGNORECASE)
-        if len(badchars.split(line)) > 1:
-            self.log.warn(self.prompt + "Attempted Bad chars: " + line)
-        reqchars =  re.match(r'(' + req + ')', badchars.split(line)[0])
-        if reqchars:
-            rmvbad = re.sub(r'(' + bad + ')', '', reqchars.group())
-            if rmvbad is not None:
-                return rmvbad
-            else:
-                return None
-        else:
-            return None
-
-    def command(self, command):
+    def command(self, key=None, command=None):
         """It's easier to pass this function around than the exec_command"""
+        ssh = Connect()
+        self.connection = ssh.connect(server=self.server, key=key)
         stdin, stdout, stderr = self.connection.exec_command(command)
         error = stderr.readlines()
         if error:
@@ -119,8 +95,10 @@ class Commands(cmd.Cmd):
         if self.connection:
             self.connection.close()
 
-    def multioutcommand(self, command, interval):
+    def multioutcommand(self,key=None command=None, interval):
         """Same as the command method, but it supports multiple runs"""
+        ssh = Connect()
+        
         self.log.info(self.prompt + command)
         for i in range(interval):
             stdin, stdout, stderr = self.connection.exec_command(command)
@@ -144,7 +122,6 @@ class Commands(cmd.Cmd):
 #
 #    def do_example(self, line):
 #        sline = self.sanitize(line, req='', bad='')
-#        self.connect()
 #        self.command(sline)
 
     def do_goto(self, line):
@@ -165,237 +142,212 @@ class Commands(cmd.Cmd):
         """date
             Prints current server time."""
         del line
-        self.connect()
         self.command('date')
 
-    def do_grep(self, line):
-        """grep
-            grep [options] pattern /var/log/<file>
-            Works the same as it does in a normal linux environment.
-            --help will return help documentation from the host server."""
-        sline = sanitize(line, req='\/var\/log\/', bad='\.\.\/|-R|-r|--mmap|-f')
-        if not sline:
-            print 'grep [options] pattern /var/log/<file>'
-        else:
-            self.connect()
-            self.command('grep ' + sline)
+#    def do_grep(self, line):
+#        """grep
+#            grep [options] pattern /var/log/<file>
+#            Works the same as it does in a normal linux environment.
+#            --help will return help documentation from the host server."""
+#        sline = sanitize(line, req='\/var\/log\/', bad='\.\.\/|-R|-r|--mmap|-f')
+#        if not sline:
+#            print 'grep [options] <pattern> /var/log/<file>'
+#        else:
+#            self.command('grep ' + sline)
 
     def do_uptime(self, line):
         """uptime
             Print the remote system's running time, users and load avgerage."""
         del line
-        self.connect()
-        self.command('uptime')
+        self.command(key='/opt/scripts/keys/uptime')
 
     def do_ps(self, line):
         """ps
             ps [options]
             ps with no options will run 'ps aux'
             Same as the ps command you know and love."""
-        sline = self.sanitize(line)
-        self.connect()
-        if not sline:
-            self.command('ps aux')
-        else:
-            self.command('ps ' + sline)
+        key = '/opt/scripts/keys/ps'
+        if not line:
+            line = 'aux'
+        self.command(key, line)
 
     def do_ifconfig(self, line):
         """ifconfig
             Print all interfaces on host. No args are supported. Sorry."""
         sline = self.sanitize(line, req='$eth[0-9]|$vif[0-9]+\.[01]')
-        self.connect()
-        if not sline:
-            self.command('sudo /sbin/ifconfig')
-        else:
-            self.command('sudo /sbin/ifconfig ')
+        key = '/opt/scripts/keys/ifconfig'
+        self.command(key, line)
 
     def do_link(self, line):
         """link
             Prints link status for eth0 or eth1 plus some stats."""
         sline = self.sanitize(line, req='\s?eth[0-9]')
-        self.connect()
+        key = '/opt/scripts/keys/ethtool'
         if sline:
-            self.command('sudo /sbin/ethtool ' + sline)
+            self.command(key, sline)
         else:
             print 'link <eth[0-9]>'
 
-    def do_iostat(self, line):
-        """iostat
-            List device usage by tapdisk/physical disk. Runs one time with no
-            arguments. A single integer after the command will run the command
-            that many times up to 100.
-            iostat <single integer>"""
-        sline = self.sanitize(line)
-        if not sline:
-            self.connect()
-            self.command('iostat -xmd')
-        else:
-            try:
-                if int(sline) <=1 or int(sline) > 100:
-                    sline = 2
-                self.connect()
-                self.multioutcommand('iostat -xmd', int(sline))
-            except ValueError:
-                print 'iostat <single integer>'
+#    def do_iostat(self, line):
+#        """iostat
+#            List device usage by tapdisk/physical disk. Runs one time with no
+#            arguments. A single integer after the command will run the command
+#            that many times up to 100.
+#            iostat <single integer>"""
+#        sline = self.sanitize(line)
+#        if not sline:
+#            self.command('iostat -xmd')
+#        else:
+#            try:
+#                if int(sline) <=1 or int(sline) > 100:
+#                    sline = 2
+#                self.multioutcommand('iostat -xmd', int(sline))
+#            except ValueError:
+#                print 'iostat <single integer>'
 
-    def do_top(self, line):
-        """top
-            Secure 'top'. This provides the top 20 high cpu processes. It will
-            run 5 times in 1 second intervals."""
-        del line
-        self.connect()
-        self.multioutcommand(
-            'uptime && ps -eo pcpu,pid,user,args | sort -k 1 -r | head -20', 5)
+#    def do_top(self, line):
+#        """top
+#            Secure 'top'. This provides the top 20 high cpu processes. It will
+#            run 5 times in 1 second intervals."""
+#        del line
+#        self.multioutcommand(
+#            'uptime && ps -eo pcpu,pid,user,args | sort -k 1 -r | head -20', 5)
 
-    def do_free(self, line):
-        """free
-            Print memory statistics. '-s' and '-c' will be filtered from input.
-            free [options]"""
-        sline = self.sanitize(line, bad='-s|-c')
-        self.connect()
-        if not sline:
-            self.command('free -m')
-        else:
-            self.command('free ' + sline)
+#    def do_free(self, line):
+#        """free
+#            Print memory statistics. '-s' and '-c' will be filtered from input.
+#            free [options]"""
+#        sline = self.sanitize(line, bad='-s|-c')
+#        if not sline:
+#            self.command('free -m')
+#        else:
+#            self.command('free ' + sline)
 
-    def do_xentop(self, line):
-        """xentop
-            Print out stats on VMs in a 'Running' power-state."""
-        del line
-        self.connect()
-        self.command('sudo /usr/sbin/xentop -b -i1')
-#TODO: Restrict users to /var/log/. Looks like a job for regex!
-    def do_logs(self, line):
-        """list
-            lists log files in /var/log/"""
-        sline = self.sanitize(line, bad='\.\.\/')
-        self.connect()
-        if sline:
-            self.command('ls -l /var/log/' + sline)
-        else:
-            self.command('ls -l /var/log/')
-#TODO: Restrict users to /var/log/!
-    def do_tail(self, line):
-        """tail
-            Returns the last 50 lines of a file in /var/log/"""
-        sline = self.sanitize(line, bad='\.\.\/')
-        if not sline:
-            print 'tail <file>'
-        else:
-            self.connect()
-            self.command('sudo tail -50 /var/log/' + sline)
+#    def do_xentop(self, line):
+#        """xentop
+#            Print out stats on VMs in a 'Running' power-state."""
+#        del line
+#        self.command('sudo /usr/sbin/xentop -b -i1')
+##TODO: Restrict users to /var/log/. Looks like a job for regex!
+#    def do_logs(self, line):
+#        """list
+#            lists log files in /var/log/"""
+#        sline = self.sanitize(line, bad='\.\.\/')
+#        if sline:
+#            self.command('ls -l /var/log/' + sline)
+#        else:
+#            self.command('ls -l /var/log/')
+##TODO: Restrict users to /var/log/!
+#    def do_tail(self, line):
+#        """tail
+#            Returns the last 50 lines of a file in /var/log/"""
+#        sline = self.sanitize(line, bad='\.\.\/')
+#        if not sline:
+#            print 'tail <file>'
+#        else:
+#            self.command('sudo tail -50 /var/log/' + sline)
 
-    def do_bwm(self, line):
-        """bwm
-            Prints all interfaces current through-put in Kb/s at 1 sec intervals
-            5 times with no arguments. '-D' and '-F' will be filtered from input
-            You can specify a interface with -I <interface>."""
-        sline = self.sanitize(line, bad='-D|-F')
-        self.connect()
-        if not sline:
-            self.multioutcommand('bwm-ng -c1 -o plain', 5)
-        else:
-            self.multioutcommand('bwm-ng -c1 -o plain ' + sline, 5)
+#    def do_bwm(self, line):
+#        """bwm
+#            Prints all interfaces current through-put in Kb/s at 1 sec intervals
+#            5 times with no arguments. '-D' and '-F' will be filtered from input
+#            You can specify a interface with -I <interface>."""
+#        sline = self.sanitize(line, bad='-D|-F')
+#        if not sline:
+#            self.multioutcommand('bwm-ng -c1 -o plain', 5)
+#        else:
+#            self.multioutcommand('bwm-ng -c1 -o plain ' + sline, 5)
 
-    def do_packets(self, line):
-        """packets
-            Prints all interfaces current packet per second count at 1 sec
-            intervals 5 times with no arguments. You can specify an interface
-            with -I <interface>."""
-        sline = self.sanitize(line)
-        self.connect()
-        if not sline:
-            self.multioutcommand('bwm-ng -c1 -o plain -u packets', 5)
-        else:
-            self.multioutcommand('bwm-ng -c1 -o plain -u packets ' + sline, 5)
-#TODO: Add usage documentation. TCPdump is a really powerful tool that could be malicious in a scripted format. May remove or only allow a few options!!!
-    def do_tcpdump(self, line):
-        """tcpdump
-            Runs tcpdump on the remote host. For this to work quickly, there
-            needs to be traffic. If the host is having network problems, you
-            may find that this takes a long time to return output. However,
-            normal traffic (mostly TCP) should come back relitively quickly.
-            tcpdump -i <interface> """
-        sline = self.sanitize(line)
-        self.connect()
-        if not sline:
-            print 'Using interface 0...'
-            self.command('sudo /usr/sbin/tcpdump -lU -c100 -nn -i eth0')
-        else:
-            self.command('sudo /usr/sbin/tcpdump -l -c100 -nn ' + sline)
+#    def do_packets(self, line):
+#        """packets
+#            Prints all interfaces current packet per second count at 1 sec
+#            intervals 5 times with no arguments. You can specify an interface
+#            with -I <interface>."""
+#        sline = self.sanitize(line)
+#        if not sline:
+#            self.multioutcommand('bwm-ng -c1 -o plain -u packets', 5)
+#        else:
+#            self.multioutcommand('bwm-ng -c1 -o plain -u packets ' + sline, 5)
+##TODO: Add usage documentation. TCPdump is a really powerful tool that could be malicious in a scripted format. May remove or only allow a few options!!!
+#    def do_tcpdump(self, line):
+#        """tcpdump
+#            Runs tcpdump on the remote host. For this to work quickly, there
+#            needs to be traffic. If the host is having network problems, you
+#            may find that this takes a long time to return output. However,
+#            normal traffic (mostly TCP) should come back relitively quickly.
+#            tcpdump -i <interface> """
+#        sline = self.sanitize(line)
+#        if not sline:
+#            print 'Using interface 0...'
+#            self.command('sudo /usr/sbin/tcpdump -lU -c100 -nn -i eth0')
+#        else:
+#            self.command('sudo /usr/sbin/tcpdump -l -c100 -nn ' + sline)
 
-    def do_list(self, line):
-        """list
-            List all VMs on the Hypervisor. xe vm-list options are supported.
-            list <slice ID> [params=<param>]"""
-        sline = self.sanitize(line, bad='Control\s[\w\s\W]+')
-        self.connect()
-        if not sline:
-            self.command('sudo xe vm-list')
-        else:
-            self.command('sudo xe vm-list name-label=' + sline)
+#    def do_list(self, line):
+#        """list
+#            List all VMs on the Hypervisor. xe vm-list options are supported.
+#            list <slice ID> [params=<param>]"""
+#        sline = self.sanitize(line, bad='Control\s[\w\s\W]+')
+#        if not sline:
+#            self.command('sudo xe vm-list')
+#        else:
+#            self.command('sudo xe vm-list name-label=' + sline)
 
-    def do_start(self, line):
-        """start
-            Start a VM
-            start <slice####>"""
-        sline = self.sanitize(line)
-        self.connect()
-        if not sline:
-            print 'start <slice ID>'
-        else:
-            self.command('sudo xe vm-start name-label=' + sline)
-#TODO: filter compute info so compute can't be rebooted!
-    def do_reboot(self, line):
-        """reboot
-            Reboot a slice.
-            reboot <slice####>"""
-        sline = self.sanitize(line, bad='Control\s[\w\s\W]+')
-        self.connect()
-        if not sline:
-            print 'reboot <slice ID>'
-        else:
-            self.command('sudo xe vm-reboot --force name-label=' + sline)
+#    def do_start(self, line):
+#        """start
+#            Start a VM
+#            start <slice####>"""
+#        sline = self.sanitize(line)
+#        if not sline:
+#            print 'start <slice ID>'
+#        else:
+#            self.command('sudo xe vm-start name-label=' + sline)
+##TODO: filter compute info so compute can't be rebooted!
+#    def do_reboot(self, line):
+#        """reboot
+#            Reboot a slice.
+#            reboot <slice####>"""
+#        sline = self.sanitize(line, bad='Control\s[\w\s\W]+')
+#        if not sline:
+#            print 'reboot <slice ID>'
+#        else:
+#            self.command('sudo xe vm-reboot --force name-label=' + sline)
 
-    def do_tasks(self, line):
-        """tasks
-            Print tasks returned by xe task-list."""
-        del line
-        self.connect()
-        self.command('sudo xe task-list')
+#    def do_tasks(self, line):
+#        """tasks
+#            Print tasks returned by xe task-list."""
+#        del line
+#        self.command('sudo xe task-list')
 
-    def do_cancel(self, line):
-        """cancel
-            Cancel a pending task.
-            cancel <task UUID>"""
-        sline = self.sanitize(line)
-        if not sline:
-            print 'cancel <task UUID>'
-        else:
-            self.connect()
-            self.command('sudo xe task-cancel uuid=' + sline)
+#    def do_cancel(self, line):
+#        """cancel
+#            Cancel a pending task.
+#            cancel <task UUID>"""
+#        sline = self.sanitize(line)
+#        if not sline:
+#            print 'cancel <task UUID>'
+#        else:
+#            self.command('sudo xe task-cancel uuid=' + sline)
 
-    def do_disks(self, line):
-        """disks
-            List all vm disks. This will list every vdi and vbd for every slice.
-            xe vm-disk-list options are supported.
-            disks <slice ID> [params=<params>]"""
-        sline = self.sanitize(line)
-        self.connect()
-        if not sline:
-            self.command('sudo xe vm-disk-list --multiple')
-        else:
-            self.command('sudo xe vm-disk-list name-label=' + sline)
+#    def do_disks(self, line):
+#        """disks
+#            List all vm disks. This will list every vdi and vbd for every slice.
+#            xe vm-disk-list options are supported.
+#            disks <slice ID> [params=<params>]"""
+#        sline = self.sanitize(line)
+#        if not sline:
+#            self.command('sudo xe vm-disk-list --multiple')
+#        else:
+#            self.command('sudo xe vm-disk-list name-label=' + sline)
 
-    def do_df(self, line):
-        """df
-            Print disk usage statistics."""
-        sline = self.sanitize(line)
-        self.connect()
-        if not sline:
-            self.command('df -h')
-        else:
-            self.command('df ' + sline)
+#    def do_df(self, line):
+#        """df
+#            Print disk usage statistics."""
+#        sline = self.sanitize(line)
+#        if not sline:
+#            self.command('df -h')
+#        else:
+#            self.command('df ' + sline)
 
     def do_exit(self, line):
         """exit
