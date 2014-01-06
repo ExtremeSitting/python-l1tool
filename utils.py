@@ -52,8 +52,10 @@ class Sanitizer(object):
 
 import warnings
 with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
+    warnings.simplefilter('ignore')
     import paramiko
+
+from getpass import getpass
 
 class Connect(object):
 
@@ -61,13 +63,17 @@ class Connect(object):
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-    def connect(self, server=None, key=None):
+    def connect(self, server=None, username=None, key=None, password=None):
         if server is None:
             raise Exception('No server')
         elif key is None:
-            raise Exception('No key')
+            if password is None:
+                password = getpass()
+        if username is None:
+            username = 'root'
         try:
-            self.ssh.connect(server, username='root', key_filename=key)
+            self.ssh.connect(server, username=username, key_filename=key,
+                    password=password)
             return self.ssh
         except paramiko.AuthenticationException:
             print 'Unable to login to remote host.'

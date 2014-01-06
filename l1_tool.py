@@ -23,6 +23,7 @@ class Commands(cmd.Cmd):
         cmd.Cmd.__init__(self)
         self.server = ''
         self.username = os.getlogin()
+        self.ssh = Connect()
         self.connection = ''
         self.Sanitizer = Sanitizer()
         self.sanitize = self.Sanitizer.sanitize
@@ -70,10 +71,16 @@ class Commands(cmd.Cmd):
         if self.connection:
             self.connection.close()
 
+    def _comm(self, command):
+        stdin, stdout, stderr = self.connection.exec_command(command)
+        for err in stderr.readlines():
+            print err[:-1]
+        for out in stdout.readlines():
+            print out[:-1]
+
     def command(self, key=None, command=''):
         """It's easier to pass this function around than the exec_command"""
-        ssh = Connect()
-        self.connection = ssh.connect(server=self.server, key=key)
+        self.connection = self.ssh.connect(server=self.server, key=key)
         stdin, stdout, stderr = self.connection.exec_command(command)
         error = stderr.readlines()
         if error:
@@ -89,15 +96,10 @@ class Commands(cmd.Cmd):
 
     def multioutcommand(self, key=None, command=None, interval=1):
         """Same as the command method, but it supports multiple runs"""
-        ssh = Connect()
-        
+        self.connection = self.ssh.connect(server=self.server, key=key)
         self.log.info(self.prompt + command)
         for i in range(interval):
-            stdin, stdout, stderr = self.connection.exec_command(command)
-            for err in stderr.readlines():
-                print err[:-1]
-            for out in stdout.readlines():
-                print out[:-1]
+            self._comm(command)
             print ''
             time.sleep(1)
         self.connection.close()
@@ -199,13 +201,14 @@ class Commands(cmd.Cmd):
 #            except ValueError:
 #                print 'iostat <single integer>'
 
-#    def do_top(self, line):
-#        """top
-#            Secure 'top'. This provides the top 20 high cpu processes. It will
-#            run 5 times in 1 second intervals."""
-#        del line
-#        self.multioutcommand(
-#            'uptime && ps -eo pcpu,pid,user,args | sort -k 1 -r | head -20', 5)
+    def do_top(self, line):
+        """top
+            Secure 'top'. This provides the top 20 high cpu processes. It will
+            run 5 times in 1 second intervals."""
+        key = '/opt/scripts/keys/top'
+        command = 'uptime && ps -eo pcpu,pid,user,args | sort -k 1 -r | head -20'
+        del line
+        self.multioutcommand(key=key, command=command, interval=5)
 
 #    def do_free(self, line):
 #        """free
