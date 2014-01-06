@@ -1,5 +1,23 @@
 #!/usr/bin/env python
 
+import logging
+import logging.handlers
+
+class Logging(object):
+
+    def __init__(self):
+        pass
+
+    def logger(self):
+        CMD_logger = logging.getLogger('CMDLogger')
+        CMD_logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(levelname)s %(message)s')
+        handler = logging.handlers.SysLogHandler(address=('localhost', 514),
+                facility='local4')
+        handler.setFormatter(formatter)
+        CMD_logger.addHandler(handler)
+        return CMD_logger
+
 import re
 
 class Sanitizer(object):
@@ -10,17 +28,9 @@ class Sanitizer(object):
         Seperate bad chars with a pipe to define multipes"""
 
     def __init__(self):
-        log_level = None
-        log = None
         self.badchars = re.compile(r'(\s?[\)\(<>;&$`\]\[\}\{\|\\\n\r\t]+[\w\W]*)',
             re.IGNORECASE)
-
-    def log_it(self):
-        return self.log_level, self.log
-
-    def _to_log(self, level, log):
-        self.log_level = level
-        self.log = log
+        self.log = Logging().logger()
 
     def sanitize(self, line, req=None, bad=None):
         if bad is None:
@@ -28,7 +38,7 @@ class Sanitizer(object):
         if req is None:
             req = '.+'
         if len(self.badchars.split(line)) > 1:
-            self._to_log('warn' ,'Attempted Bad chars: %s' % line)
+            self.log.warn('Attempted Bad chars: %s' % line)
             return None
         reqchars =  re.match(r'(' + req + ')', self.badchars.split(line)[0])
         if reqchars:
@@ -40,7 +50,10 @@ class Sanitizer(object):
         else:
             return None
 
-import paramiko
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import paramiko
 
 class Connect(object):
 
@@ -49,11 +62,13 @@ class Connect(object):
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     def connect(self, server=None, key=None):
-        if server or key is None:
-            raise Exception('No server or Key')
+        if server is None:
+            raise Exception('No server')
+        elif key is None:
+            raise Exception('No key')
         try:
-            ssh.connect(server, username='root', key_filename=key)
-            return ssh
+            self.ssh.connect(server, username='root', key_filename=key)
+            return self.ssh
         except paramiko.AuthenticationException:
             print 'Unable to login to remote host.'
 

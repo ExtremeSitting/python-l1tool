@@ -5,15 +5,13 @@
 #server change. It could then grab the list of servers and save the compute node
 #info for filtering. This would also test connection to the server and could log
 #success!
-import logging
-import logging.handlers
 import time
 import cmd
 import os
 
 from utils import Sanitizer
 from utils import Connect
-#TODO: Need to add command decorators for sanitation instead of assigning sline
+from utils import Logging
 
 
 class Commands(cmd.Cmd):
@@ -26,18 +24,9 @@ class Commands(cmd.Cmd):
         self.server = ''
         self.username = os.getlogin()
         self.connection = ''
-        self.log = self.logger()
-        self.sanitize = Sanitizer().sanitize
-        self.keys = 
-
-    def logger(self):
-        CMD_logger = logging.getLogger('CMDLogger')
-        CMD_logger.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(levelname)s %(message)s')
-        handler = logging.handlers.SysLogHandler(address=('XXXXXXX', 514))
-        handler.setFormatter(formatter)
-        CMD_logger.addHandler(handler)
-        return CMD_logger
+        self.Sanitizer = Sanitizer()
+        self.sanitize = self.Sanitizer.sanitize
+        self.log = self.Sanitizer.log
 
     intro = '*' * 50 + '\n' + '*' + ' ' * 20 + 'L1 Tool' + ' ' * 21 + '*' + \
             '\n' + '*' * 50 + '\n' 
@@ -61,8 +50,11 @@ class Commands(cmd.Cmd):
             user hits 'enter' on an empty line"""
         print ''
 
-    def precmd(self, start, line):
-        return cmd.Cmd.precmd(self, start, self.sanitize(line))
+    def precmd(self, line):
+        sline = self.sanitize(line)
+        if sline is None:
+            sline = '\n'
+        return cmd.Cmd.precmd(self, sline)
 
     def postcmd(self, stop, line):
         """After the command is run make sure the SSH connection has
@@ -74,28 +66,28 @@ class Commands(cmd.Cmd):
     def postloop(self):
         """Make sure the connection is closed again when the script is
             exiting."""
-        self.log.info( self.prompt + 'Logout')
+        self.log.info(self.prompt + 'Logout')
         if self.connection:
             self.connection.close()
 
-    def command(self, key=None, command=None):
+    def command(self, key=None, command=''):
         """It's easier to pass this function around than the exec_command"""
         ssh = Connect()
         self.connection = ssh.connect(server=self.server, key=key)
         stdin, stdout, stderr = self.connection.exec_command(command)
         error = stderr.readlines()
         if error:
-            self.log.error(self.prompt + command)
+            self.log.error('%s%s %s' % (self.prompt, key.split('/')[-1], command))
             print 'ERROR:'
             for err in error:
                 print err[:-1]
-        self.log.info(self.prompt + command)
+        self.log.info('%s%s %s' % (self.prompt, key.split('/')[-1], command))
         for out in stdout.readlines():
             print out[:-1]
         if self.connection:
             self.connection.close()
 
-    def multioutcommand(self,key=None command=None, interval):
+    def multioutcommand(self, key=None, command=None, interval=1):
         """Same as the command method, but it supports multiple runs"""
         ssh = Connect()
         
@@ -138,11 +130,11 @@ class Commands(cmd.Cmd):
             self.prompt = self.username + '@' + self.server + '>> '
             self.log.info(self.prompt + 'Change server') 
 
-    def do_date(self, line):
-        """date
-            Prints current server time."""
-        del line
-        self.command('date')
+#    def do_date(self, line):
+#        """date
+#            Prints current server time."""
+#        del line
+#        self.command('date')
 
 #    def do_grep(self, line):
 #        """grep
@@ -188,15 +180,17 @@ class Commands(cmd.Cmd):
         else:
             print 'link <eth[0-9]>'
 
-#    def do_iostat(self, line):
-#        """iostat
-#            List device usage by tapdisk/physical disk. Runs one time with no
-#            arguments. A single integer after the command will run the command
-#            that many times up to 100.
-#            iostat <single integer>"""
-#        sline = self.sanitize(line)
-#        if not sline:
-#            self.command('iostat -xmd')
+    def do_iostat(self, line):
+        """iostat
+            List device usage by tapdisk/physical disk. Runs one time with no
+            arguments. A single integer after the command will run the command
+            that many times up to 100.
+            iostat <single integer>"""
+        sline = self.sanitize(line)
+        key = '/opt/scripts/keys/iostat'
+        if not sline:
+            sline = 'xmd'
+        self.command(key, sline)
 #        else:
 #            try:
 #                if int(sline) <=1 or int(sline) > 100:
